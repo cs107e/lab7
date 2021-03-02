@@ -22,13 +22,13 @@ all : $(NAME).bin speed.list
 %.list: %.o
 	arm-none-eabi-objdump --no-show-raw-insn -d $< > $@
 
-install: $(NAME).bin
-	rpi-install.py -p $<
+run: $(NAME).bin
+	rpi-run.py -p $<
 
 clean:
 	rm -f *.o *.bin *.elf *.list *~
 
-.PHONY: all clean install
+.PHONY: all clean run
 .PRECIOUS: %.elf %.o
 
 # empty recipe used to disable built-in rules for native build

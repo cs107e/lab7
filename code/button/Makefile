@@ -4,14 +4,12 @@ CFLAGS = -I$(CS107E)/include -g -Wall -O2 -std=c99 -ffreestanding -mapcs-frame -
 LDFLAGS = -nostdlib -T memmap -L$(CS107E)/lib
 LDLIBS = -lpi -lgcc
 
-IOBJECTS = ../interrupts/interrupts_asm.o ../interrupts/bits_asm.o
-
 all : $(NAME).bin
 
 %.bin: %.elf
 	arm-none-eabi-objcopy $< -O binary $@
 
-%.elf: %.o $(IOBJECTS)
+%.elf: %.o
 	arm-none-eabi-gcc $(LDFLAGS) $^ $(LDLIBS) -o $@
 
 %.o: %.c
@@ -23,13 +21,13 @@ all : $(NAME).bin
 %.list: %.o
 	arm-none-eabi-objdump --no-show-raw-insn -d $< > $@
 
-install: $(NAME).bin
-	rpi-install.py -p $<
+run: $(NAME).bin
+	rpi-run.py -p $<
 
 clean:
 	rm -f *.o *.bin *.elf *.list *~
 
-.PHONY: all clean install
+.PHONY: all clean run
 .PRECIOUS: %.elf %.o
 
 # empty recipe used to disable built-in rules for native build

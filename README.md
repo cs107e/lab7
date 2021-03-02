@@ -29,49 +29,29 @@ your final assignment.
 During this lab you will:
 
 - Review the support code for interrupts on the Pi,
-- Fill in two missing pieces of assembly code: the code of the interrupt handler itself and a helper function that shows
-  you a case where knowing assembly can make your code 100x faster,
 - Write code to handle button presses using GPIO event interrupts, and
-- Optimize a screen redraw function (and enjoy the adrenaline rush!).
-
+- Brainstorm possibilities for achieving world domination with your awesome bare-metal Raspberry Pi final project.
 
 ## Prelab preparation
-To prepare for lab, do the following:
+To prepare for lab, do the following: 
 
 - Pull the latest version of the `cs107e.github.io` courseware repository.
 - Clone the lab repository `https://github.com/cs107e/lab7`.
+- Browse our [project gallery](/project_gallery/) to gather ideas and inspiration from the projects of our past students.
+- Extra supplies needed in lab this week:
+    - __HDMI cable and display__
+    - __parts kit__ (breadboard, button, jumper)
+
 
 ## Lab exercises
 
-Pull up the [check in questions](checkin) so you have it open as you go.
-
 ### Interrupts
 
-#### 1) Review and write interrupt code (60 min)
+#### 1) Review interrupt assembly
 
-In class, we introduced the `interrupts` module that is used to
-configure interrupts and manage interrupt handlers. The module
-interface is documented in `interrupts.h` and its implementation is
-split into the files `interrupts.c` (C code) and `interrupts_asm.s`
-(assembly). `interrupts.h` is in the `cs107e/include` directory, while
-`interrupts.c` is in the `cs107e/src` directory.  You have an
-almost-complete version of `interrupts_asm.s` in your starter code
-that you'll complete in lab.  You can access the cs107e directory by
-[browsing cs107e on
-github](https://github.com/cs107e/cs107e.github.io/blob/master/cs107e/)
-or by changing to the directory `$CS107E` on your laptop.
+In the first lecture on interrupts, we went over the low-level mechanisms. The `interrupts` module is used to configure interrupts and manage interrupt handlers at the system level. The module interface is documented in `interrupts.h` and its implementation is split into the files `interrupts.c` (C code) and `interrupts_asm.s` (assembly). These source files are available in the directory `$CS107E/src`.
 
-Read through the code for `interrupts_init` in `interrupts.c` and
-review the contents of the vector table and how it is installed into
-the correct location.
-
-Take a look at `interrupts_asm.s` in `code/interrupts`. This directory
-contains the two assembly files you will be writing code in.
-`interrupts_asm.s` contains almost all of the assembly code you need
-to support interrupts. There's one missing part, the interrupt handler
-itself, which you will write.
-
-The first two functions, `interrupts_global_disable` and `interrupts_global_enable`,
+Start by reviewing the assembly in `interrupts_asm.s`. The first two functions, `interrupts_global_disable` and `interrupts_global_enable`,
 do as they indicate: they flip the interrupts enabled bit in the CPSR
 (current processor state register). This register is so important and
 special that it has its own instructions to read and write it, `msr` and
@@ -96,16 +76,15 @@ store absolute addresses and can be copied with the table. This means
 that when we copy the table to `_RPI_INTERRUPT_VECTOR_BASE`, code will
 still jump to the right address and call these functions. Note that
 `_vectors_end` is *after* these two `.word` values, so they are copied
-with the table.
+with the table. Look over the function `interrupts_init` of `interrupts.c` to see how the vectors are copied to the proper location.
 
 `abort_asm` resets the stack pointer to use a separate stack (so it
 won't corrupt our current stack) then jumps to `pi_abort`, which
 does not return.
 
-Challenge one another to understand each and every line of this code.
-After you've gone through it, work through the questions below to
-confirm your understanding. Ask us for clarification on anything you
-find confusing.
+Let's now dig into `interrupts_asm`. This is the critical sequence of assembly needed to safely transition in and out of interrupt mode. Carefully trace this sequence and challenge each other to understand what instruction is doing and why. At the point it calls the C function `interrupt_dispatch`, things proceed pretty normally until it's time for the one jam-packed final instruction need to resume supervisor mode. 
+
+Here are some questions to confirm your understanding of the low-level mechanisms. Ask us for clarification on anything you find confusing.
 
 + When installing the vector table, `interrupts_init` copies eight
 instructions plus two additional words of data. What are those
@@ -129,212 +108,135 @@ be to configure the interrupt stack at program start along with the
 supervisor stack, but doing so then would require temporarily changing
 to interrupt mode -- why is that switch needed?
 
+You're ready for a check-in question [^1]
+
+#### 2) Review interrupt dispatch
+
+In our second lecture on interrupts, we looked at dispatch support in the `interrupts` and `gpio_interrupts` modules. These modules maintain a table of handlers (function pointers), each handler is registered to a particular event and stored in the table under the event index. When an event occurs, the dispatch accesses the event index in the table and invokes the registered handler. In the top-level `interrupts` module, the interrupt source number is the index into the table of handlers. In the `gpio_interrupts` module, the GPIO pin number is used as the index. 
+
+Both modules make use of neat performance trick for quickly identifying the index of the event that triggered the interrupt. The needed process is to scan the bits in the interrupt registers to find the bit that is set and. This scan is performed by the function `count_leading_zeroes` declared in `bits.h`. The obvious way to implement this function is in C. You could perhaps iterate over each bit, or do some fancy bit twiddling, say use Kernighan's algorithm and combine it with a lookup table. This might take anywhere from 8-100 cycles.
+
+A better way to implement it is in assembly. ARM has a
+[`clz` instruction](http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0802a/Cihjgjed.html)
+that can perform the needed operation in a single operation. Look into the source code for `bits_asm.s` to see how it is used here.  This use of assembly cuts the time it takes to find a pending interrupt from 100 to 3 cycles, a 33x improvement. Given this code runs on every interrupt, this is an excellent performance improvement: it's why instructions like `clz` exist. Neat!
+
 + How is a function "registered" as a handler for an interrupt source?
-Can there be multiple handlers registered to the same source> What
+Can there be multiple handlers registered to the same source? What
 happens if no handler has been registered to process a handled interrupt?
 
++ An `aux_data` pointer can be stored stored with a registered handler. That pointer is later passed to as an argument to the handler when invoked. What is the purpose of an `aux_data` pointer?
 
-You need to fill in `interrupts_asm`. Recall, this assembly code needs
-to:
-  - set your stack pointer to `0x8000`,
-  - fix the return address (since the value of `lr` is 8 after the interrupted instruction),
-  - safely store the state of the processor,
-  - invoke `interrupt_dispatch` passing the fixed return address as the first argument, and
-  - restore the processor to its state before the interrupt was triggered.
+Confirm your understanding with a check-in question [^2]
 
-We provided code for this in lecture -- _don't look at it just yet!_ The
-goal of this part of the lab is for you to try to write it yourself, then
-compare with our reference solution.
+#### 3) Set up a button circuit
 
-An interrupt is triggered immediately *after* an instruction. So this means that
-if `lr` is equal to 0x81a0, the interrupt was triggered right after 0x8198 and the
-next instruction the processor should execute after the instruction is 0x819c.
+Now let's get going on using interrupts in a s program. Set up a one-button circuit on your breadboard. Connect one sside of the button to GPIO pin 20 and the other side to ground. Connect your Pi to a HDMI monitor.
 
-To safely store the state of the processor, you need to spill `r0`-`r12` as well
-as the value you want to restore to `pc` (as calculated above). You don't
-need to spill `r13`-`r15` because interrupt mode has its own copies of these
-registers. One easy
-easy way to do this is update `lr` with the correct value and add it to the list
-of registers you store with `push`.
+![button circuit](images/button-circuit.jpg){: .zoom -w-50}
 
-You can then invoke the C function `interrupts_dispatch` which is implemented
-in `interrupts.c`.
+The button circuit is configured for a default state of high (1) by activating the Pi's internal pull-up resistor on the button GPIO.  When the button is not pressed, the resistor "pulls up" the value to 1.  When the button is pressed, it closes the circuit and connects the pin to ground. The value then reads as 0.
 
-The last part is the trickiest, because it uses an assembly feature you haven't
-used before, automatically changing the execution context. Recall that
-an interrupt handler runs in the interrupt context -- this is why we have
-seperate copies of `r13`-`r15`. If we just jump back to the next instruction
-in our main code, we'll be running our main code in interrupt context and
-won't handle any more interrupts.
+The `main` function in `code/button/button.c` sits in a loop, waiting for a button press and then redrawing the screen. Fill in the implementation of the empty `wait_for_click` function. This version of  `wait_for_click` operates by _polling_. It should:
 
-The assembly feature you want to use is `^`. You put this at the end
-of the list of registers you want to load with `ldm`. If one of the
-registers you load is the program counter, the processor will go back
-to the previous execution context it was in. The ARM reference manual
-reads, [^ is an optional suffix. You must not use it in User mode or
-System mode...  If op is LDM and reglist contains the pc (r15), in
-addition to the normal multiple register transfer, the SPSR is copied
-into the CPSR. This is for returning from exception handlers. Use this
-only from exception
-modes.](http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0068b/ch02s08s01.html)
-So, for example, if you wanted to load registers `r0`, `r8`, and `pc`
-from the stack and return to your previous execution context, you'd
-use the instruction `ldm sp! {r0, r8, pc}^`.
+1. Wait for a falling edge on the button gpio, i.e. watch for the pin state to transition from 1 to 0 (you can read the pin state with `gpio_read`).
 
-Once you've written your `interrupt_asm` function, go to the lecture
-slides for Interrupts and look at the code there. Is your code the same?
-Different? Equivalent? If it's different and you're not sure if it's
-equivalent, try using your code first and see if it works! If it doesn't,
-staff can help you understand why, and you can always fall back to
-the reference implementaiton.
+2. Increment the `gCount` global variable and announce the event with a `printf("Click!")`
 
-In addition to `interrupt_asm`, you need to implement one more
-function in assembly.  This function is used by `interrupts.c`. You'll
-also probably want to use it in your GPIO interrupt library below. Its
-signature is:
+Compile and run the program. Each time you click the button, the message is printed and the screen redraws and shows the incremented count of clicks. This version of the program is always redrawing or waiting for a click, but it's either one or the other. While waiting for a button press, the screen redraw is paused. While redrawing the screen, no button presses are detected. Ideally, we want the program to do both tasks concurrently.
 
-```unsigned int count_leading_zeroes(unsigned int value);```
+- If you click the button multiple times in quick succession, some of
+the presses are missed. You get neither a printed message nor a screen
+redraw and these clicks are not included in the count. Why does that happen? 
 
-Take a look at its definition in `bits.h` to see exactly how it should work.
+You'll note that redrawing the screen is quite slow. If we speed
+that up, it would cause us to miss fewer events, but we still have to spin waiting for a press and still can miss events. Interrupts will solve this problem.
 
-The obvious way to implement this function is in C. You could perhaps
-iterate over every bit, or do some fancy bit twiddling, say use
-Kernighan's algorithm mentioned in class and combine it with a lookup
-table. This might take anywhere from 8-100 cycles.
-
-A better way to implement it is in assembly. Read up on the
-[`clz` instruction](http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.dui0802a/Cihjgjed.html)
-and implement `count_leading_zeroes` as an assembly function in `bits_asm.s`.
-If you need a refresher on the ARM calling convention for how
-arguments and return values are put into registers, you can
-refer to the [lecture notes on C functions, starting on slide 
-23](http://cs107e.github.io/lectures/C_Functions/slides.pdf).
-If you've done this right, by knowing a bit of assembly you've been able
-to cut the time it takes to find a pending interrupt from 100 to 3 cycles,
-a 33x improvement. Given this code runs on every interrupt, this is an
-excellent performance improvement: it's why instructions like `clz` exist.
-
-Your system can now handle interrupts!
-
-Debugging this part of your code is very hard. If something is wrong,
-things can go very, very wrong. To help you with this, we've included
-a very simple program, `armtimer_diagnostic`. This program uses the
-interrupts module to handle a periodic timer and links in your
-implementations of `interrupts_asm.s` and `bits_asm.s`. It prints out
-a few key values when the timer fires, such as a stack backtrace as
-well as the current position of the stack pointer. This last one is
-useful to make sure that the stack is being properly setup and
-restored: it should be identical on every invocation, and a bit below
-`0x8000`.
-
-
-Very carefully trace the critical sequence of assembly
-instructions in the interrupt vector used to safely transition into
-interrupt mode and back again. Once you get to a C function, the code
-proceeds pretty normally. Look at the C code which stores the client's
-handler function pointers and how the dispatch finds the appropriate
-handler to process an interrupt.
-
-#### 2) Set up a button circuit (10 min)
-
-Set up a simple, one-button circuit on your breadboard. Connect one
-side of the button to GPIO pin 20 and the other side to
-ground. Connect your Pi to a HDMI monitor.
-
-<img title="Button circuit" src="images/button-circuit.jpg" width="300">
-
-Configure the button circuit so that the default state of the pin is
-high (1) and pressing the button brings it low (0). The way to do this
-is to use a pull-up resistor as you did with the PS/2 clock line. 
-When the button is not pressed, the resistor "pulls up" the value
-to 1.  When the button is pressed, it closes the circuit and connects
-the pin to ground. The value then reads as 0.
-
-The application in `button/button.c` loops waiting for a button press
-and then redraws the screen. Fill in the implementation of the empty
-`configure_button` and `wait_for_click` functions.  `wait_for_click`
-should:
-
-+ Wait for a falling edge on the button gpio, i.e. wait until the pin goes from 1 to 0 (checking its state with `gpio_read`).
-
-+ Use `printf("+")` to report the press.
-
-
-Compile and run the program. Press the button and you get a printed
-`+` and the screen redraws. Each redraw cycles the background color
-from red->white->blue.
-
-1. If you click the button multiple times in quick succession, some of
-the presses are missed. You get neither a printed `+` nor a screen
-redraw. Why does that happen?
-
-You'll note that redrawing the screen is glacially slow. If we speed
-that up (which we will do later in this lab!), it would cause us to
-miss fewer events, but we still have to spin waiting for a press and
-still can miss events. Interrupts will solve this problem.
-
-#### 3) Write a button handler (20 min)
+#### 4) Write a button handler
 
 You are now going to rework the program to detect button presses via
 interrupts.
 
-Remove the call to `wait_for_click`. Compile and re-run. The program
-now repeatedly redraw the screen, cycling the colors
-red->white->blue. This appears to completely dominate the CPU and
-leave no time for anything other than screen redraw.
+Remove the call to `wait_for_click` from the loop in `main`. Compile and re-run. The program now repeatedly redraws the screen.  If you click the button, nothing happens, as the program is not reading the state of the GPIO pin, it's 100% occupied with drawing.
 
-There are several steps to configuring and enabling interrupts:
+To handle button press via interrupt, you need to make several edits to the program:
 
-- Update `configure_button` to enable detection of falling edge events
-on the button pin. You can consult 
-[gpioextra.h](https://github.com/cs107e/cs107e.github.io/blob/master/cs107e/include/gpioextra.h)
-for documentation on the function `gpio_enable_event_detection`.
-- Write your handler. This function should have the signature
-`bool (*)(unsigned int pc)`. For starters, just have it print something
-to the console. Remember that this handler must clear the event,
-or it will trigger forever.
-- In `main`, register your handler to your button pin with
-`interrupts_register_handler` for `INTERRUPTS_GPIO3`.
-- Finally, in `main`, set up your system to generate interrupts. You
-need to initialize the interrupts module, enable global interrupts,
-and enable interrupts for `INTERRUPTS_GPIO3`. You can refer to
-`armtimer_diagnostic` for what this code looks like.
+- Enable detection of falling edge events on the GPIO pin connected as button input. The function you need is `gpio_enable_event_detection`. The gpio event functions are documented in the header file [gpio_extra.h](/header#gpio_extra).
+- Add a handler function to process the event.
+    - The handler function must be defined to match the required prototype:
+        
+        `void my_function(unsigned int pc, void *aux_data)`
+    - The handler must clear the event. Check the header file [gpio_extra.h](/header#gpio_extra) to find the function used to do this.
+    - Use the `aux_data` parameter to pass a message string to the handler. The handler should cast the received pointer to  `char *` to and use `printf` to output the message.
+- Edit the `main` function to configure and enable interrupts. There are several things you need to do and the order in which you do them is important.
+    - Initialize both `interrupts` module and the `gpio_interrupts` module.
+    - Register your handler with the `gpio_interrupts` module. Pass the string "YOUR-NAME-HERE is an interrupt ninja" as the `aux_data` pointer when registering your handler. The handler will print this message.
+    - Turn on global interrupts. 
 
-The order that you do these operations can be very important: think
-carefully about what this code does, revisiting the lecture notes if
+Think carefully about each of these changes, revisiting the lecture notes if
 you need to.  Talk this over with your tablemates and ensure that you
 understand what each step does and why it's necessary.
 
-Compile and run the program. As before, the loop main appears to be
-continuously redrawing, but pressing the button will print your
-message.  You get the best of both worlds: your long-running
-computation can be written as a simple loop, yet the system remains
-extremely responsive to input.
+Compile and run the program. If you have done everything correctly, the program continuously redraws as before, but now whenever you click the button, it prints a message to congratulate your prowess with interrupts and the click count increments.  You get the best of both worlds: your long-running computation can be written as a simple loop, yet the system is immediately responsive to input.
 
-#### 4) Make your screen respond to button presses (30 min)
-
-In this final step, you will rewrite your program so the screen
-changes only when a button is pressed. This requires that our interrupt
-and main code share state.
-
-Change your program so the color drawn is based on the number of
-button presses rather than `nrefresh`. The variable you use to store
-the number of button presses must be declared `volatile`. Why? Can the
-compiler tell, by looking at only this file, how control flows between
-main and the interrupt handler? Will the compiler generate different
-code if `volatile` than without it? Will the program behave
-differently? Test it both ways and find out!
-
-When you're done, discuss and answer the following questions with your 
-neighbors.
-
-1. What changes if your counter variable is not declared `volatile`?
-
-1. Describe what is done by each step of configuring and enabling interrupts. What would be the effect of forgetting that step?
+1. Describe the sequence of steps to configure and enable interrupts. What is the consequence of skipping a step or doing the steps out of order?
 
 1. What happens if the handler does not clear the event before returning?
 
-## Check in with TA (10m)
+You're ready for these check-in questions [^3] [^4]
 
-At the end of the lab period, call over a TA to [check in](checkin) with your progress on the lab.
+#### 5) Coordinate between main and interrupt
 
+You want to change the program to now redraw once in response to a button click rather than continuously update. This requires that the interrupt and main code share state.
+
+Edit the code within the loop in `main` to only call `redraw` if the count of clicks `gCount` has changed since the last redraw. Save the count used at last redraw and compare that saved value to `gCount` to determine when a redraw is necessary.
+
+The count is being stored in the global variable `gCount`. The handler increments it and the `main` reads the value and compares to saved count.  `gCount` is not currently declared `volatile`. Should it be? Why or why not?  Can the compiler tell, by looking at only this file, how control flows between main and the interrupt handler? Will the compiler generate different code if `volatile` than without it? Will the program behave differently? Test it both ways and find out!
+
+- What changes if `gCount` variable is not declared `volatile`? [^5]
+
+#### 6) Use a ring buffer queue
+
+Watch carefully as the program executes and you'll note that every click is detected and counted, but the count of redraw iterations is not one-to-one with those updates. Multiple clicks can occur before the `main` loop gets around to next checking the value of `gCount`.
+
+To track all updates and process each one by one, we can use a queue to communicate between the interrupt handler and `main`. The handler will enqueue each update to the queue and `main` will dequeue each update. Because the queue stores every individual update posted by the interrupt handler, we can be sure that we never miss one.
+
+How to rework the code:
+
+- Review the [ringbuffer.h](header#ringbuffer) header file and [ringbuffer.c](https://github.com/cs107e/cs107e.github.io/blob/master/cs107e/src/ringbuffer.c) source for documentation on the ring buffer queue. This ADT maintains a queue of integer values implemented as a ring buffer.
+- In the `main` function, declare a variable of type `rb_t *rb` and initialize with a call to `rb_new`.  Use the  `rb` pointer as the `aux_data` pointer when registering the handler.
+- Edit your handler to now cast the `aux_data` parameter to type `rb_t *`.  In the handler, enqueue the updated value of count to the ring buffer by calling `rb_enqueue`.
+- Edit `main` to use `rb_dequeue` to retrieve each update from the queue. This replaces the previous code that compared `gCount` to the saved value to detect a change in click count.
+
+Make the above changes and rebuild and run the program. It should now redraw the screen once for each button press in one-to-one correspondence, including patiently processing a backlog of redraws from a sequences of fast presses. 
+
+When you're done, take a moment to verify your understanding:
+
+1. Why is the significance of the return value from `rb_dequeue`? Why is it essential to pay attention to that return value?
+1. Why might you want the handler to enqueue and return instead of doing
+   the actual task (e.g. redraw) directly in the handler?
+1. With this change, is it now necessary for `gCount` to be declared `volatile`? Does the ring buffer need to be declared `volatile`?  Why or why not?
+
+You're ready for the final check-in question [^6]
+
+### Project brainstorm and team speed-dating
+
+Visit our [project gallery](https://cs107e.github.io/project_gallery/) to see a sampling of projects from our past students. We are __so so proud__ of the creations of our past students -- impressive, inventive, and fun! You'll get started in earnest on the project next week, but we set aside a little time in this week's lab for a group discussion to preview the general guidelines and kindle your creativity about possible directions you could take in your project. If you have questions about the project arrangements or are curious about any of our past projects, please ask us for more info, we love to talk about the neat work we've seen our students do. If you have ideas already fomenting, share with the group to find synergy and connect with possible teammates. Project teams are most typically pairs, although occasionally we have allowed solo or trios by special request.
+
+### Bonus speed exercise
+In past quarters, we have used some of the time in lab7 do some explorations in performance optimization. We don't have time for it this quarter, but we linked the [materials](speed) if you want to check it out for fun.
+
+## Check in with TA 
+
+Before leaving the lab, check in with a TA and discuss any challenges to answering the questions in the lab. If you do not feel confident about your responses, please ask us about it too!
+
+[^1]: Why is 4 subtracted from the `lr?
+
+[^2]: How is a function "registered" as a handler for an interrupt source? Can there be multiple handlers registered to the same source? What happens if an event is generated on a source for which no handler s been registered?
+
+[^3]: What initialization must happen before registering a handler with the gpio_interrupts module? What happens if you attempt to register a handler without the proper initialization?
+
+[^4]: What happens if an interrupt handler does not clear the event before returning?
+
+[^5]: What is the consequence of not declaring the `gCount` variable as `volatile`?
+
+[^6]: Why might you want the handler to enqueue an update and return instead of doing the actual task (e.g. redraw) directly in the handler?
